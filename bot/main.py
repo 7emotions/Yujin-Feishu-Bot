@@ -24,6 +24,8 @@ LARK_CLI_CMD = [
     "lark-cli",
     "event",
     "+subscribe",
+    "--as",
+    "bot",
     "--event-types",
     "im.message.receive_v1",
     "--compact",
