@@ -1,0 +1,33 @@
+{
+  "schema": "2.0",
+  "header": {
+    "event_id": "abcd5678",
+    "event_type": "im.message.receive_v1",
+    "create_time": "1713801605000",
+    "token": "test_token",
+    "app_id": "cli_a962cb8308391bd9",
+    "tenant_key": "test_tenant"
+  },
+  "event": {
+    "message": {
+      "message_id": "om_fixture_002",
+      "root_id": "om_fixture_002",
+      "parent_id": "",
+      "create_time": "1713801605000",
+      "update_time": "1713801605000",
+      "chat_id": "oc_fixture_001",
+      "chat_type": "p2p",
+      "message_type": "file",
+      "content": "{\"file_key\": \"file_fixture_pdf123\"}"
+    },
+    "sender": {
+      "sender_id": {
+        "open_id": "ou_fixture_user1",
+        "union_id": "on_fixture_user1",
+        "user_id": "fixture_user1"
+      },
+      "sender_type": "user",
+      "tenant_key": "test_tenant"
+    }
+  }
+}

@@ -1,4 +1,5 @@
 """Tests for bot/approval_creator.py"""
+# pyright: reportMissingParameterType=false, reportUnknownParameterType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownVariableType=false, reportPrivateLocalImportUsage=false, reportUnusedCallResult=false, reportAny=false
 import json
 from unittest.mock import MagicMock, patch
 
@@ -12,6 +13,21 @@ def _setup_env(monkeypatch):
     monkeypatch.setenv("BOT_USER_ID", "ou_test")
     monkeypatch.setenv("APPROVER_OPEN_ID", "ou_approver_test")
     monkeypatch.setenv("APPROVAL_CODE", "TEST-APPROVAL-CODE-1234")
+    monkeypatch.setenv(
+        "FORM_FIELD_IDS",
+        json.dumps(
+            {
+                "invoice_no": "widget_invoice_no",
+                "amount": "widget_amount",
+                "currency": "widget_currency",
+                "date": "widget_date",
+                "vendor": "widget_vendor",
+                "category": "widget_category",
+                "description": "widget_description",
+                "attachment": "widget_attachment",
+            }
+        ),
+    )
 
 
 def test_create_approval_returns_instance_code(monkeypatch):
@@ -221,3 +237,36 @@ def test_api_error_raises_runtime_error(monkeypatch):
     with patch("bot.approval_creator.requests.post", return_value=mock_response):
         with pytest.raises(RuntimeError, match="Failed to create approval instance"):
             ac.create_reimbursement_approval("ou_user", invoice_fields, "file_code")
+
+
+def test_empty_form_field_ids_raises_value_error(monkeypatch):
+    """Empty FORM_FIELD_IDS should fail instead of falling back to field names."""
+    _setup_env(monkeypatch)
+    monkeypatch.setenv("FORM_FIELD_IDS", "{}")
+
+    import importlib
+    import bot.config as config
+
+    importlib.reload(config)
+    import bot.token_manager as tm
+
+    importlib.reload(tm)
+    import bot.approval_creator as ac
+
+    importlib.reload(ac)
+
+    invoice_fields = {
+        k: "test"
+        for k in [
+            "invoice_no",
+            "amount",
+            "currency",
+            "date",
+            "vendor",
+            "category",
+            "description",
+        ]
+    }
+
+    with pytest.raises(ValueError, match="FORM_FIELD_IDS not configured"):
+        ac.create_reimbursement_approval("ou_user", invoice_fields, "file_code")

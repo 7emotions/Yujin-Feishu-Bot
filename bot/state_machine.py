@@ -11,6 +11,7 @@ Guards:
   - Ignore messages from BOT_USER_ID (self-trigger prevention)
   - Ignore group chat messages (chat_type != "p2p")
 """
+# pyright: reportAny=false, reportExplicitAny=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false
 import json
 import logging
 import re
@@ -18,6 +19,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any
 
 from openai import OpenAI
 
@@ -37,6 +39,8 @@ from bot import (
 )
 
 logger = logging.getLogger(__name__)
+EventDict = dict[str, Any]
+InvoiceFields = dict[str, str]
 
 
 class ConversationState(Enum):
@@ -48,7 +52,7 @@ class ConversationState(Enum):
 @dataclass
 class UserSession:
     state: ConversationState = ConversationState.IDLE
-    invoice_fields: dict = field(default_factory=dict)
+    invoice_fields: InvoiceFields = field(default_factory=dict)
     file_bytes: bytes = b""
     filename: str = ""
     message_id: str = ""
@@ -63,14 +67,14 @@ class ConversationStateMachine:
 
     def __init__(self) -> None:
         self._sessions: dict[str, UserSession] = {}
-        self._lock = threading.Lock()
+        self._lock: threading.Lock = threading.Lock()
 
     def get_or_create_session(self, user_id: str) -> UserSession:
         if user_id not in self._sessions:
             self._sessions[user_id] = UserSession(sender_open_id=user_id)
         return self._sessions[user_id]
 
-    def handle_event(self, event: dict) -> None:
+    def handle_event(self, event: EventDict) -> None:
         """Route an incoming Feishu event to the appropriate handler."""
         try:
             msg = event["event"]["message"]
@@ -100,7 +104,11 @@ class ConversationStateMachine:
             if session.state == ConversationState.IDLE:
                 if message_type in ("image", "file"):
                     self._handle_invoice_message(session, event)
-                # else: ignore text messages in IDLE state
+                elif message_type == "text":
+                    message_sender.send_text(
+                        session.chat_id,
+                        "请发送发票图片或PDF文件，我将帮您提交报销申请。",
+                    )
 
             elif session.state == ConversationState.PROCESSING:
                 message_sender.reply_text(msg["message_id"], "正在处理中，请稍候...")
@@ -108,7 +116,7 @@ class ConversationStateMachine:
             elif session.state == ConversationState.AWAITING_CONFIRM:
                 self._handle_text_reply(session, event)
 
-    def _handle_invoice_message(self, session: UserSession, event: dict) -> None:
+    def _handle_invoice_message(self, session: UserSession, event: EventDict) -> None:
         """Download and parse invoice; transition to AWAITING_CONFIRM."""
         msg = event["event"]["message"]
         session.state = ConversationState.PROCESSING
@@ -135,7 +143,7 @@ class ConversationStateMachine:
             session.state = ConversationState.IDLE
             message_sender.reply_text(session.message_id, "❌ 处理发票失败，请重试。")
 
-    def _handle_text_reply(self, session: UserSession, event: dict) -> None:
+    def _handle_text_reply(self, session: UserSession, event: EventDict) -> None:
         """Handle text message during AWAITING_CONFIRM state."""
         msg = event["event"]["message"]
         try:

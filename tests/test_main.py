@@ -1,12 +1,17 @@
 """Tests for bot/main.py"""
 
+# pyright: reportAny=false, reportExplicitAny=false, reportPrivateUsage=false, reportPrivateLocalImportUsage=false, reportUnusedCallResult=false
+
 import importlib
 import json
-import sys
-from unittest.mock import MagicMock, patch, call
+from typing import Any
+from unittest.mock import MagicMock, patch
+
+from _pytest.capture import CaptureFixture
+from _pytest.monkeypatch import MonkeyPatch
 
 
-def _setup_env(monkeypatch):
+def _setup_env(monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setenv("APP_ID", "cli_test")
     monkeypatch.setenv("APP_SECRET", "test_secret")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
@@ -14,7 +19,7 @@ def _setup_env(monkeypatch):
     monkeypatch.setenv("APPROVER_OPEN_ID", "ou_approver_test")
 
 
-def _reload_main(monkeypatch):
+def _reload_main(monkeypatch: MonkeyPatch):
     _setup_env(monkeypatch)
     import bot.config as config
     importlib.reload(config)
@@ -25,19 +30,24 @@ def _reload_main(monkeypatch):
     return main
 
 
-def test_build_env_has_lark_cli_no_proxy(monkeypatch):
+def test_build_env_has_lark_cli_no_proxy(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setenv("http_proxy", "http://127.0.0.1:7890")
+    monkeypatch.setenv("https_proxy", "http://127.0.0.1:7890")
     main = _reload_main(monkeypatch)
     env = main._build_env()
     assert env["LARK_CLI_NO_PROXY"] == "1"
+    assert "http_proxy" not in env
+    assert "https_proxy" not in env
+    assert env["NO_PROXY"] == "*"
 
 
-def test_build_env_has_nvm_bin_in_path(monkeypatch):
+def test_build_env_has_nvm_bin_in_path(monkeypatch: MonkeyPatch) -> None:
     main = _reload_main(monkeypatch)
     env = main._build_env()
     assert ".nvm" in env["PATH"]
 
 
-def test_event_routing_to_state_machine(monkeypatch):
+def test_event_routing_to_state_machine(monkeypatch: MonkeyPatch) -> None:
     """NDJSON lines are parsed and routed to state_machine.handle_event."""
     main = _reload_main(monkeypatch)
 
@@ -54,9 +64,9 @@ def test_event_routing_to_state_machine(monkeypatch):
         }
     }
 
-    handled_events = []
+    handled_events: list[dict[str, Any]] = []
 
-    def fake_handle(evt):
+    def fake_handle(evt: dict[str, Any]) -> None:
         handled_events.append(evt)
 
     # Simulate one line of NDJSON then EOF
@@ -72,9 +82,8 @@ def test_event_routing_to_state_machine(monkeypatch):
         with patch("subprocess.Popen", return_value=mock_proc):
             # Run one iteration only — patch time.sleep to raise after first reconnect attempt
             call_count = [0]
-            original_sleep = __import__("time").sleep
 
-            def fake_sleep(n):
+            def fake_sleep(_n: int) -> None:
                 call_count[0] += 1
                 if call_count[0] >= 1:
                     raise KeyboardInterrupt
@@ -89,7 +98,7 @@ def test_event_routing_to_state_machine(monkeypatch):
     assert handled_events[0] == event
 
 
-def test_bad_json_line_does_not_crash(monkeypatch):
+def test_bad_json_line_does_not_crash(monkeypatch: MonkeyPatch) -> None:
     """Malformed NDJSON lines are logged and skipped, not raised."""
     main = _reload_main(monkeypatch)
 
@@ -107,16 +116,16 @@ def test_bad_json_line_does_not_crash(monkeypatch):
     # No exception raised — test passes if we get here
 
 
-def test_dry_run_exits_zero(monkeypatch, capsys):
+def test_dry_run_exits_zero(monkeypatch: MonkeyPatch, capsys: CaptureFixture[str]) -> None:
     """--dry-run prints 'config valid' and exits 0."""
     _setup_env(monkeypatch)
 
     # Force reload of all bot modules to pick up monkeypatched env
     import bot.config as config
-    importlib.reload(config)
+    _ = importlib.reload(config)
 
     import bot.main as main
-    importlib.reload(main)
+    _ = importlib.reload(main)
 
     with patch("sys.exit") as mock_exit:
         main._dry_run()

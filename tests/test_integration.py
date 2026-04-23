@@ -1,8 +1,8 @@
+# pyright: reportMissingParameterType=false, reportUnknownParameterType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownVariableType=false, reportPrivateLocalImportUsage=false, reportUnusedCallResult=false, reportAny=false, reportUnknownLambdaType=false, reportUnusedImport=false, reportMissingTypeArgument=false
 import importlib
 import json
-import os
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -14,6 +14,21 @@ def _setup_env(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("BOT_USER_ID", "ou_bot_test")
     monkeypatch.setenv("APPROVER_OPEN_ID", "ou_approver_test")
+    monkeypatch.setenv(
+        "FORM_FIELD_IDS",
+        json.dumps(
+            {
+                "invoice_no": "widget_invoice_no",
+                "amount": "widget_amount",
+                "currency": "widget_currency",
+                "date": "widget_date",
+                "vendor": "widget_vendor",
+                "category": "widget_category",
+                "description": "widget_description",
+                "attachment": "widget_attachment",
+            }
+        ),
+    )
 
 
 def _reload_all(monkeypatch):
@@ -169,3 +184,12 @@ def test_fixture_file_exists():
     data = json.loads(fixture.read_text())
     assert data["event"]["message"]["chat_type"] == "p2p"
     assert data["event"]["message"]["message_type"] == "image"
+
+
+def test_fixture_pdf_file_exists():
+    fixture = FIXTURES_DIR / "sample_event_file.json"
+    assert fixture.exists(), f"Fixture not found: {fixture}"
+    data = json.loads(fixture.read_text())
+    assert data["event"]["message"]["chat_type"] == "p2p"
+    assert data["event"]["message"]["message_type"] == "file"
+    assert "file_key" in json.loads(data["event"]["message"]["content"])

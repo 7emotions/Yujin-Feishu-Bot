@@ -1,6 +1,8 @@
 """Centralized configuration loader for feishu-reimbursement-bot."""
+# pyright: reportUnknownVariableType=false, reportUnusedCallResult=false, reportAny=false, reportExplicitAny=false, reportMissingParameterType=false, reportUnknownParameterType=false
 import json
 import os
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -30,17 +32,43 @@ APPROVER_OPEN_ID: str = _require("APPROVER_OPEN_ID")
 
 # Optional keys (may not be set until approval definition is created)
 APPROVAL_CODE: str = _optional("APPROVAL_CODE")
+APPROVER_NODE_KEY: str = _optional("APPROVER_NODE_KEY")
+
+
+def _parse_form_field_ids(raw_value: str) -> dict[str, str]:
+    """Parse FORM_FIELD_IDS from JSON into a string-only mapping."""
+    if not raw_value:
+        return {}
+    try:
+        parsed: Any = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return {}
+
+    if not isinstance(parsed, dict):
+        return {}
+
+    result: dict[str, str] = {}
+    for key, value in parsed.items():
+        if isinstance(key, str) and isinstance(value, str):
+            result[key] = value
+    return result
+
 
 # Form field IDs - JSON dict or empty
 _form_field_ids_raw: str = _optional("FORM_FIELD_IDS", "{}")
-try:
-    FORM_FIELD_IDS: dict = json.loads(_form_field_ids_raw) if _form_field_ids_raw else {}
-except json.JSONDecodeError:
-    FORM_FIELD_IDS = {}
+FORM_FIELD_IDS: dict[str, str] = _parse_form_field_ids(_form_field_ids_raw)
 
 # List-type keys (comma-separated in .env)
-CONFIRM_KEYWORDS: list = [k.strip() for k in _optional("CONFIRM_KEYWORDS", "confirm,yes,确认,好的,ok").split(",") if k.strip()]
-CANCEL_KEYWORDS: list = [k.strip() for k in _optional("CANCEL_KEYWORDS", "cancel,取消,算了,不了").split(",") if k.strip()]
+CONFIRM_KEYWORDS: list[str] = [
+    k.strip()
+    for k in _optional("CONFIRM_KEYWORDS", "confirm,yes,确认,好的,ok").split(",")
+    if k.strip()
+]
+CANCEL_KEYWORDS: list[str] = [
+    k.strip()
+    for k in _optional("CANCEL_KEYWORDS", "cancel,取消,算了,不了").split(",")
+    if k.strip()
+]
 
 # Integer keys
 TIMEOUT_SECONDS: int = int(_optional("AWAITING_CONFIRM_TIMEOUT_SECONDS", "600"))

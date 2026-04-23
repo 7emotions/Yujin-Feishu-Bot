@@ -3,18 +3,22 @@
 Uses tenant_access_token for authentication (NOT user_access_token).
 The form field must be JSON-stringified (double-encoded) when sent to the API.
 """
+# pyright: reportAny=false, reportExplicitAny=false
 import json
 import logging
 import uuid
+from typing import Any
 
 import requests
 
-from bot.config import APPROVAL_CODE, APPROVER_OPEN_ID, FORM_FIELD_IDS
+from bot.config import APPROVAL_CODE, APPROVER_NODE_KEY, APPROVER_OPEN_ID, FORM_FIELD_IDS
 from bot.token_manager import token_manager
 
 logger = logging.getLogger(__name__)
 
 APPROVAL_INSTANCE_URL = "https://open.feishu.cn/open-apis/approval/v4/instances"
+InvoiceFields = dict[str, str]
+ApprovalFormItem = dict[str, str | list[str]]
 
 # Default field type mapping (matches the form control types in Feishu)
 FIELD_TYPE_MAP = {
@@ -31,7 +35,7 @@ FIELD_TYPE_MAP = {
 
 def create_reimbursement_approval(
     user_open_id: str,
-    invoice_fields: dict,
+    invoice_fields: InvoiceFields,
     file_code: str,
 ) -> str:
     """Create a Feishu approval instance for expense reimbursement.
@@ -54,26 +58,24 @@ def create_reimbursement_approval(
             "APPROVAL_CODE is not configured. Complete APPROVAL_SETUP.md steps first."
         )
 
-    token = token_manager.get_token()
-
-    # Build form array using field IDs from config (or fallback to index-based)
+    # Validate configured widget IDs before any external API calls
     form = _build_form(invoice_fields, file_code)
+
+    token = token_manager.get_token()
 
     # form must be JSON-stringified (double-encoded)
     form_json_str = json.dumps(form)
 
-    payload = {
+    payload: dict[str, Any] = {
         "approval_code": APPROVAL_CODE,
         "open_id": user_open_id,
         "form": form_json_str,
-        "node_approver_open_id_list": [
-            {
-                "key": "APPROVER_NODE_KEY",
-                "value": [APPROVER_OPEN_ID],
-            }
-        ],
         "uuid": str(uuid.uuid4()).upper(),
     }
+    if APPROVER_NODE_KEY:
+        payload["node_approver_open_id_list"] = [
+            {"key": APPROVER_NODE_KEY, "value": [APPROVER_OPEN_ID]}
+        ]
 
     logger.info(
         "Creating approval instance for user %s, approval_code %s",
@@ -91,7 +93,7 @@ def create_reimbursement_approval(
         timeout=30,
     )
     response.raise_for_status()
-    data = response.json()
+    data: dict[str, Any] = response.json()
 
     if data.get("code") != 0:
         raise RuntimeError(
@@ -103,11 +105,14 @@ def create_reimbursement_approval(
     return instance_code
 
 
-def _build_form(invoice_fields: dict, file_code: str) -> list:
+def _build_form(invoice_fields: InvoiceFields, file_code: str) -> list[ApprovalFormItem]:
     """Build the form array for the approval API.
 
-    Uses FORM_FIELD_IDS from config if available, otherwise uses field names as IDs.
+    Requires FORM_FIELD_IDS from config to provide real Feishu widget IDs.
     """
+    if not FORM_FIELD_IDS:
+        raise ValueError("FORM_FIELD_IDS not configured — add widget IDs to .env")
+
     field_mapping = [
         ("invoice_no", "invoice_no", "input"),
         ("amount", "amount", "number"),
@@ -118,9 +123,11 @@ def _build_form(invoice_fields: dict, file_code: str) -> list:
         ("description", "description", "textarea"),
     ]
 
-    form = []
+    form: list[ApprovalFormItem] = []
     for field_key, config_key, field_type in field_mapping:
-        widget_id = FORM_FIELD_IDS.get(config_key, field_key)
+        widget_id = FORM_FIELD_IDS.get(config_key)
+        if not widget_id:
+            raise ValueError(f"FORM_FIELD_IDS missing widget ID for '{config_key}'")
         value = invoice_fields.get(field_key, "")
         form.append(
             {
@@ -130,7 +137,9 @@ def _build_form(invoice_fields: dict, file_code: str) -> list:
             }
         )
 
-    attachment_id = FORM_FIELD_IDS.get("attachment", "attachment")
+    attachment_id = FORM_FIELD_IDS.get("attachment")
+    if not attachment_id:
+        raise ValueError("FORM_FIELD_IDS missing widget ID for 'attachment'")
     form.append(
         {
             "id": attachment_id,

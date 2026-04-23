@@ -1,9 +1,10 @@
 """Tests for bot/state_machine.py"""
+# pyright: reportMissingParameterType=false, reportUnknownParameterType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownVariableType=false, reportPrivateLocalImportUsage=false, reportPrivateUsage=false, reportUnusedCallResult=false
 
 import importlib
 import json
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 
 def _setup_env(monkeypatch):
@@ -12,6 +13,21 @@ def _setup_env(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("BOT_USER_ID", "ou_bot_test")
     monkeypatch.setenv("APPROVER_OPEN_ID", "ou_approver_test")
+    monkeypatch.setenv(
+        "FORM_FIELD_IDS",
+        json.dumps(
+            {
+                "invoice_no": "widget_invoice_no",
+                "amount": "widget_amount",
+                "currency": "widget_currency",
+                "date": "widget_date",
+                "vendor": "widget_vendor",
+                "category": "widget_category",
+                "description": "widget_description",
+                "attachment": "widget_attachment",
+            }
+        ),
+    )
 
 
 def _reload_module(monkeypatch):
@@ -181,3 +197,17 @@ def test_processing_state_replies_wait_message(monkeypatch):
 
     mock_reply.assert_called_once()
     assert "正在处理中" in mock_reply.call_args[0][1]
+
+
+def test_idle_text_sends_usage_hint_without_state_change(monkeypatch):
+    sm = _reload_module(monkeypatch)
+    fsm = sm.ConversationStateMachine()
+
+    with patch.object(sm.message_sender, "send_text") as mock_send:
+        fsm.handle_event(make_text_event("你好", message_id="om_003", chat_id="oc_hint"))
+
+    session = fsm.get_or_create_session("ou_user1")
+    assert session.state == sm.ConversationState.IDLE
+    mock_send.assert_called_once_with(
+        "oc_hint", "请发送发票图片或PDF文件，我将帮您提交报销申请。"
+    )
