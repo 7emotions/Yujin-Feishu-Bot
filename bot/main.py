@@ -9,6 +9,7 @@ import argparse
 import json
 import logging
 import os
+import signal
 import subprocess
 import sys
 import threading
@@ -21,6 +22,7 @@ if __package__ is None or __package__ == "":
 from bot.state_machine import state_machine
 
 logger = logging.getLogger(__name__)
+_current_proc: subprocess.Popen[str] | None = None
 
 PROXY_ENV_KEYS = [
     "http_proxy",
@@ -77,16 +79,18 @@ def _timeout_checker() -> None:
 
 def _run_event_loop() -> None:
     """Inner loop: spawn subprocess, read NDJSON, reconnect on EOF."""
+    global _current_proc
     env = _build_env()
     while True:
         logger.info("Starting lark-cli event subscriber...")
         try:
-            proc = subprocess.Popen(
+            proc: subprocess.Popen[str] = subprocess.Popen(
                 LARK_CLI_CMD,
                 stdout=subprocess.PIPE,
                 env=env,
                 text=True,
             )
+            _current_proc = proc
             stdout = proc.stdout
             if stdout is None:
                 raise RuntimeError("lark-cli stdout pipe was not created")
@@ -110,7 +114,19 @@ def _run_event_loop() -> None:
             )
         except Exception as exc:
             logger.error("Subprocess error: %s. Reconnecting in %ds...", exc, RECONNECT_DELAY_SECONDS)
+        finally:
+            if _current_proc is not None and _current_proc.poll() is not None:
+                _current_proc = None
         time.sleep(RECONNECT_DELAY_SECONDS)
+
+
+def _sigterm_handler(signum: int, frame: object) -> None:
+    """Handle SIGTERM by killing the active subprocess and exiting."""
+    del signum, frame
+    logger.info("Received SIGTERM, shutting down.")
+    if _current_proc is not None and _current_proc.poll() is None:
+        _current_proc.kill()
+    sys.exit(0)
 
 
 def start_event_loop() -> None:
@@ -121,14 +137,15 @@ def start_event_loop() -> None:
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     logger.info("feishu-reimbursement-bot starting up")
+    signal.signal(signal.SIGTERM, _sigterm_handler)
 
     checker = threading.Thread(target=_timeout_checker, daemon=True)
     checker.start()
 
     try:
         _run_event_loop()
-    except KeyboardInterrupt:
-        logger.info("Received KeyboardInterrupt, shutting down.")
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Shutting down.")
         sys.exit(0)
 
 
