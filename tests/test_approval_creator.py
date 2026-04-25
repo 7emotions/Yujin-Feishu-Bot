@@ -167,6 +167,118 @@ def test_attachment_field_value_is_array(monkeypatch):
     assert "MY-FILE-CODE" in attachment_field["value"]
 
 
+def test_number_and_date_fields_are_normalized(monkeypatch):
+    """number/date widgets should be coerced into Feishu-compatible value formats."""
+    _setup_env(monkeypatch)
+
+    import importlib
+    import bot.config as config
+
+    importlib.reload(config)
+    import bot.token_manager as tm
+
+    importlib.reload(tm)
+    import bot.approval_creator as ac
+
+    importlib.reload(ac)
+
+    ac.token_manager.get_token = MagicMock(return_value="fake_token")
+
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"code": 0, "data": {"instance_code": "TEST"}}
+    mock_response.raise_for_status = MagicMock()
+
+    invoice_fields = {
+        "invoice_no": "INV-001",
+        "amount": "￥907.88",
+        "currency": "CNY",
+        "date": "2026-04-07",
+        "vendor": "供应商",
+        "category": "其他",
+        "description": "说明",
+    }
+
+    with patch("bot.approval_creator.requests.post", return_value=mock_response) as mock_post:
+        ac.create_reimbursement_approval("ou_user", invoice_fields, "FILE-CODE")
+
+    payload = mock_post.call_args[1]["json"]
+    form = json.loads(payload["form"])
+    amount_field = next(f for f in form if f["type"] == "number")
+    date_field = next(f for f in form if f["type"] == "date")
+
+    assert amount_field["value"] == 907.88
+    assert date_field["value"] == "2026-04-07T00:00:00+08:00"
+
+
+def test_create_approval_with_realistic_reimbursement_payload(monkeypatch):
+    """A realistic reimbursement payload should be transformed into Feishu-compatible form values."""
+    _setup_env(monkeypatch)
+    monkeypatch.setenv(
+        "FORM_OPTION_IDS",
+        json.dumps(
+            {
+                "CNY": "opt_currency_cny",
+                "其他": "opt_category_other",
+            }
+        ),
+    )
+
+    import importlib
+    import bot.config as config
+
+    importlib.reload(config)
+    import bot.token_manager as tm
+
+    importlib.reload(tm)
+    import bot.approval_creator as ac
+
+    importlib.reload(ac)
+
+    ac.token_manager.get_token = MagicMock(return_value="fake_token")
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"code": 0, "data": {"instance_code": "INST-REALISTIC-001"}}
+    mock_response.raise_for_status = MagicMock()
+
+    invoice_fields = {
+        "invoice_no": "26952000001406410711",
+        "amount": "￥907.88",
+        "currency": "CNY",
+        "date": "2026-04-07",
+        "vendor": "深圳市乐晓数字技术有限公司",
+        "category": "其他",
+        "description": "RK3576开发板采购",
+    }
+
+    with patch("bot.approval_creator.requests.post", return_value=mock_response) as mock_post:
+        result = ac.create_reimbursement_approval(
+            "ou_f906e54608aa7d299378f699beae2aaa",
+            invoice_fields,
+            "BAE2DBC5-A5B0-4A6D-ABC7-128F9E0DD259",
+        )
+
+    assert result == "INST-REALISTIC-001"
+
+    payload = mock_post.call_args.kwargs["json"]
+    form = json.loads(payload["form"])
+
+    assert payload["approval_code"] == "TEST-APPROVAL-CODE-1234"
+    assert payload["open_id"] == "ou_f906e54608aa7d299378f699beae2aaa"
+
+    amount_field = next(field for field in form if field["id"] == "widget_amount")
+    currency_field = next(field for field in form if field["id"] == "widget_currency")
+    date_field = next(field for field in form if field["id"] == "widget_date")
+    category_field = next(field for field in form if field["id"] == "widget_category")
+    attachment_field = next(field for field in form if field["id"] == "widget_attachment")
+
+    assert amount_field["value"] == 907.88
+    assert currency_field["value"] == "opt_currency_cny"
+    assert date_field["value"] == "2026-04-07T00:00:00+08:00"
+    assert category_field["value"] == "opt_category_other"
+    assert attachment_field["value"] == ["BAE2DBC5-A5B0-4A6D-ABC7-128F9E0DD259"]
+
+
 def test_missing_approval_code_raises_value_error(monkeypatch):
     """If APPROVAL_CODE not set, should raise ValueError."""
     _setup_env(monkeypatch)

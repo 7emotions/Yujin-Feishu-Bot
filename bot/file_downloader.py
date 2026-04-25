@@ -1,30 +1,49 @@
+
 """Download invoice images and PDF files from Feishu message resources.
 
-CRITICAL: message.content is a JSON-encoded STRING that must be
-json.loads()-parsed to extract image_key or file_key.
+message.content may arrive either as a JSON-encoded string or as an already
+decoded mapping, depending on the SDK event shape. This helper accepts both.
 """
 import json
 import logging
+from collections.abc import Mapping
+from typing import Any
 
 import requests
 
 from bot.token_manager import token_manager
+from bot.utils import ColoredFormatter
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+handler = logging.StreamHandler()
+handler.setFormatter(ColoredFormatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+logger.addHandler(handler)
 
 DOWNLOAD_URL_TEMPLATE = (
     "https://open.feishu.cn/open-apis/im/v1/messages/{message_id}/resources/{key}"
 )
 
 
-def download_file(message_id: str, message_type: str, content_str: str) -> tuple[bytes, str]:
+def _parse_content(content: str | Mapping[str, Any]) -> dict[str, Any]:
+    """Parse Feishu message.content from either JSON string or mapping."""
+    if isinstance(content, Mapping):
+        return dict(content)
+    return json.loads(content)
+
+
+def download_file(
+    message_id: str,
+    message_type: str,
+    content_str: str | Mapping[str, Any],
+) -> tuple[bytes, str]:
     """Download an invoice image or PDF from Feishu.
 
     Args:
         message_id: Feishu message ID (e.g. "om_xxx")
         message_type: "image" or "file"
-        content_str: Raw JSON string from event message.content field.
-                     MUST be json.loads()-parsed here — it is double-encoded.
+        content_str: Raw JSON string or mapping from event message.content.
 
     Returns:
         Tuple of (file_bytes, filename)
@@ -37,7 +56,7 @@ def download_file(message_id: str, message_type: str, content_str: str) -> tuple
             f"Unsupported message_type '{message_type}'. Must be 'image' or 'file'."
         )
 
-    content = json.loads(content_str)
+    content = _parse_content(content_str)
 
     if message_type == "image":
         key = content["image_key"]

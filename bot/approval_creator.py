@@ -1,24 +1,39 @@
+# pyright: reportAny=false, reportExplicitAny=false
 """Create Feishu approval instances for expense reimbursement.
 
 Uses tenant_access_token for authentication (NOT user_access_token).
 The form field must be JSON-stringified (double-encoded) when sent to the API.
 """
-# pyright: reportAny=false, reportExplicitAny=false
+
 import json
 import logging
+import re
 import uuid
 from typing import Any
 
 import requests
 
-from bot.config import APPROVAL_CODE, APPROVER_NODE_KEY, APPROVER_OPEN_ID, FORM_FIELD_IDS
+from bot.config import (
+    APPROVAL_CODE,
+    APPROVER_NODE_KEY,
+    APPROVER_OPEN_ID,
+    FORM_FIELD_IDS,
+    FORM_OPTION_IDS,
+)
 from bot.token_manager import token_manager
+from bot.utils import ColoredFormatter
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+handler = logging.StreamHandler()
+handler.setFormatter(ColoredFormatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+logger.addHandler(handler)
 
 APPROVAL_INSTANCE_URL = "https://open.feishu.cn/open-apis/approval/v4/instances"
 InvoiceFields = dict[str, str]
-ApprovalFormItem = dict[str, str | list[str]]
+ApprovalFormValue = str | int | float | list[str]
+ApprovalFormItem = dict[str, ApprovalFormValue]
 
 # Default field type mapping (matches the form control types in Feishu)
 FIELD_TYPE_MAP = {
@@ -92,6 +107,9 @@ def create_reimbursement_approval(
         json=payload,
         timeout=30,
     )
+    status_code = getattr(response, "status_code", None)
+    if isinstance(status_code, int) and status_code >= 400:
+        logger.error("Approval create failed: status=%s body=%s", status_code, response.text)
     response.raise_for_status()
     data: dict[str, Any] = response.json()
 
@@ -103,6 +121,36 @@ def create_reimbursement_approval(
     instance_code = data["data"]["instance_code"]
     logger.info("Created approval instance: %s", instance_code)
     return instance_code
+
+
+def _normalize_number_value(raw_value: str) -> int | float | str:
+    """Convert human-formatted amounts into numeric values for Feishu number widgets."""
+    cleaned = re.sub(r"[^0-9.\-]", "", raw_value)
+    if not cleaned:
+        return ""
+    try:
+        numeric = float(cleaned)
+    except ValueError:
+        return raw_value
+    return int(numeric) if numeric.is_integer() else numeric
+
+
+def _normalize_date_value(raw_value: str) -> str:
+    """Convert YYYY-MM-DD into RFC3339 expected by Feishu date widgets."""
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw_value):
+        return f"{raw_value}T00:00:00+08:00"
+    return raw_value
+
+
+def _normalize_field_value(field_type: str,raw_value: str) -> str | int | float:
+    """Coerce widget values into Feishu-expected formats."""
+    if field_type == "number":
+        return _normalize_number_value(raw_value)
+    if field_type == "date":
+        return _normalize_date_value(raw_value)
+    if field_type == "radioV2":
+        return FORM_OPTION_IDS.get(raw_value)
+    return raw_value
 
 
 def _build_form(invoice_fields: InvoiceFields, file_code: str) -> list[ApprovalFormItem]:
@@ -128,7 +176,8 @@ def _build_form(invoice_fields: InvoiceFields, file_code: str) -> list[ApprovalF
         widget_id = FORM_FIELD_IDS.get(config_key)
         if not widget_id:
             raise ValueError(f"FORM_FIELD_IDS missing widget ID for '{config_key}'")
-        value = invoice_fields.get(field_key, "")
+        raw_value = invoice_fields.get(field_key, "")
+        value = _normalize_field_value(field_type,raw_value)
         form.append(
             {
                 "id": widget_id,

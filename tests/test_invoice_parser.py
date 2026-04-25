@@ -1,8 +1,6 @@
 """Tests for bot/invoice_parser.py"""
 
 import importlib
-import os
-from unittest.mock import MagicMock
 
 
 def _setup_env(monkeypatch):
@@ -26,15 +24,15 @@ def _reload_parser(monkeypatch):
 
 def test_parse_invoice_image_returns_all_7_keys(monkeypatch):
     invoice_parser = _reload_parser(monkeypatch)
-
-    mock_client = MagicMock()
-    mock_response = MagicMock()
-    mock_response.choices[0].message.content = (
-        '{"invoice_no":"INV-001","amount":"100.00","currency":"CNY","date":"2024-01-01",'
-        '"vendor":"供应商","category":"餐饮","description":"午餐"}'
+    monkeypatch.setattr(invoice_parser, "_load_images", lambda _file_bytes, _filename: ["image"])
+    monkeypatch.setattr(
+        invoice_parser,
+        "_generate_invoice_json",
+        lambda _images: (
+            '{"invoice_no":"INV-001","amount":"100.00","currency":"CNY","date":"2024-01-01",'
+            '"vendor":"供应商","category":"餐饮","description":"午餐"}'
+        ),
     )
-    mock_client.chat.completions.create.return_value = mock_response
-    monkeypatch.setattr(invoice_parser, "OpenAI", MagicMock(return_value=mock_client))
 
     result = invoice_parser.parse_invoice(b"fakeimgbytes", "invoice.jpg")
 
@@ -50,31 +48,42 @@ def test_parse_invoice_image_returns_all_7_keys(monkeypatch):
     }
 
 
-def test_parse_invoice_pdf_sends_input_file_type(monkeypatch):
+def test_load_images_pdf_uses_pdf_renderer(monkeypatch):
     invoice_parser = _reload_parser(monkeypatch)
+    calls: list[bytes] = []
 
-    mock_client = MagicMock()
-    mock_response = MagicMock()
-    mock_response.choices[0].message.content = "{}"
-    mock_client.chat.completions.create.return_value = mock_response
-    monkeypatch.setattr(invoice_parser, "OpenAI", MagicMock(return_value=mock_client))
+    def fake_pdf_loader(file_bytes: bytes):
+        calls.append(file_bytes)
+        return ["page1"]
 
-    invoice_parser.parse_invoice(b"fakepdfbytes", "invoice.pdf")
+    monkeypatch.setattr(invoice_parser, "_load_pdf_images", fake_pdf_loader)
 
-    call_kwargs = mock_client.chat.completions.create.call_args.kwargs
-    messages = call_kwargs["messages"]
-    user_message = messages[1]
-    assert "input_file" in str(user_message["content"]) or "file_data" in str(user_message["content"])
+    result = invoice_parser._load_images(b"fakepdfbytes", "invoice.pdf")
+
+    assert result == ["page1"]
+    assert calls == [b"fakepdfbytes"]
+
+
+def test_load_images_pdf_magic_bytes_use_pdf_renderer(monkeypatch):
+    invoice_parser = _reload_parser(monkeypatch)
+    calls: list[bytes] = []
+
+    def fake_pdf_loader(file_bytes: bytes):
+        calls.append(file_bytes)
+        return ["page1"]
+
+    monkeypatch.setattr(invoice_parser, "_load_pdf_images", fake_pdf_loader)
+
+    result = invoice_parser._load_images(b"%PDF-1.7\nfake", "receipt")
+
+    assert result == ["page1"]
+    assert calls == [b"%PDF-1.7\nfake"]
 
 
 def test_parse_invoice_missing_field_returns_empty_string(monkeypatch):
     invoice_parser = _reload_parser(monkeypatch)
-
-    mock_client = MagicMock()
-    mock_response = MagicMock()
-    mock_response.choices[0].message.content = '{"invoice_no":"001","amount":"100"}'
-    mock_client.chat.completions.create.return_value = mock_response
-    monkeypatch.setattr(invoice_parser, "OpenAI", MagicMock(return_value=mock_client))
+    monkeypatch.setattr(invoice_parser, "_load_images", lambda _file_bytes, _filename: ["image"])
+    monkeypatch.setattr(invoice_parser, "_generate_invoice_json", lambda _images: '{"invoice_no":"001","amount":"100"}')
 
     result = invoice_parser.parse_invoice(b"fakeimgbytes", "invoice.jpg")
 
@@ -86,12 +95,8 @@ def test_parse_invoice_missing_field_returns_empty_string(monkeypatch):
 
 def test_parse_invoice_json_error_returns_empty_dict(monkeypatch):
     invoice_parser = _reload_parser(monkeypatch)
-
-    mock_client = MagicMock()
-    mock_response = MagicMock()
-    mock_response.choices[0].message.content = "Sorry, I cannot process this."
-    mock_client.chat.completions.create.return_value = mock_response
-    monkeypatch.setattr(invoice_parser, "OpenAI", MagicMock(return_value=mock_client))
+    monkeypatch.setattr(invoice_parser, "_load_images", lambda _file_bytes, _filename: ["image"])
+    monkeypatch.setattr(invoice_parser, "_generate_invoice_json", lambda _images: "Sorry, I cannot process this.")
 
     result = invoice_parser.parse_invoice(b"fakeimgbytes", "invoice.jpg")
 
@@ -108,13 +113,77 @@ def test_parse_invoice_json_error_returns_empty_dict(monkeypatch):
 
 def test_parse_invoice_strips_markdown_fences(monkeypatch):
     invoice_parser = _reload_parser(monkeypatch)
-
-    mock_client = MagicMock()
-    mock_response = MagicMock()
-    mock_response.choices[0].message.content = '```json\n{"invoice_no":"X001"}\n```'
-    mock_client.chat.completions.create.return_value = mock_response
-    monkeypatch.setattr(invoice_parser, "OpenAI", MagicMock(return_value=mock_client))
+    monkeypatch.setattr(invoice_parser, "_load_images", lambda _file_bytes, _filename: ["image"])
+    monkeypatch.setattr(invoice_parser, "_generate_invoice_json", lambda _images: '```json\n{"invoice_no":"X001"}\n```')
 
     result = invoice_parser.parse_invoice(b"fakeimgbytes", "invoice.jpg")
 
     assert result["invoice_no"] == "X001"
+
+
+def test_parse_invoice_extracts_json_from_wrapped_text(monkeypatch):
+    invoice_parser = _reload_parser(monkeypatch)
+    monkeypatch.setattr(invoice_parser, "_load_images", lambda _file_bytes, _filename: ["image"])
+    monkeypatch.setattr(
+        invoice_parser,
+        "_generate_invoice_json",
+        lambda _images: '好的，结果如下：```json\n{"invoice_no":"X009","amount":"100"}\n```',
+    )
+
+    result = invoice_parser.parse_invoice(b"fakeimgbytes", "invoice.jpg")
+
+    assert result["invoice_no"] == "X009"
+    assert result["amount"] == "100"
+
+
+def test_correct_invoice_fields_returns_normalized_json(monkeypatch):
+    invoice_parser = _reload_parser(monkeypatch)
+    monkeypatch.setattr(invoice_parser, "_load_images", lambda _file_bytes, _filename: ["image"])
+    monkeypatch.setattr(
+        invoice_parser,
+        "_generate_correction_json",
+        lambda _images, _fields, _text: '{"invoice_no":"X002","amount":200,"currency":"CNY"}',
+    )
+
+    result = invoice_parser.correct_invoice_fields(
+        b"fakeimgbytes",
+        "invoice.jpg",
+        {
+            "invoice_no": "X001",
+            "amount": "100",
+            "currency": "CNY",
+            "date": "",
+            "vendor": "",
+            "category": "",
+            "description": "",
+        },
+        "金额改成200",
+    )
+
+    assert result["invoice_no"] == "X002"
+    assert result["amount"] == "200"
+    assert result["currency"] == "CNY"
+
+
+def test_correct_invoice_fields_fallback_keeps_existing_fields(monkeypatch):
+    invoice_parser = _reload_parser(monkeypatch)
+    monkeypatch.setattr(invoice_parser, "_load_images", lambda _file_bytes, _filename: ["image"])
+    monkeypatch.setattr(invoice_parser, "_generate_correction_json", lambda _images, _fields, _text: "")
+
+    original = {
+        "invoice_no": "X001",
+        "amount": "100",
+        "currency": "CNY",
+        "date": "2024-01-01",
+        "vendor": "供应商",
+        "category": "餐饮",
+        "description": "午餐",
+    }
+    result = invoice_parser.correct_invoice_fields(
+        b"fakeimgbytes",
+        "invoice.jpg",
+        original,
+        "金额改成200",
+    )
+
+    assert result == original

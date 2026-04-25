@@ -10,6 +10,11 @@ __pycache__/
 venv/
 .venv/
 
+.playwright-mcp
+.pytest_cache/
+.vscode/
+
+
 # Project-specific
 .sisyphus/
 

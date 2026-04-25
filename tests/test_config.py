@@ -72,3 +72,19 @@ def test_missing_required_key_raises_value_error(monkeypatch):
 
     with pytest.raises(ValueError):
         importlib.reload(config)
+
+
+def test_openai_api_key_is_optional(monkeypatch):
+    """OPENAI_API_KEY should no longer be required for local-only runtime."""
+    monkeypatch.setenv("APP_ID", "cli_test")
+    monkeypatch.setenv("APP_SECRET", "secret")
+    monkeypatch.setenv("OPENAI_API_KEY", "")
+    monkeypatch.setenv("BOT_USER_ID", "ou_test")
+    monkeypatch.setenv("APPROVER_OPEN_ID", "ou_approver")
+
+    import importlib
+    import bot.config as config
+
+    importlib.reload(config)
+
+    assert config.OPENAI_API_KEY == ""

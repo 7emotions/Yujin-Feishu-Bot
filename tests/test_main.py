@@ -1,13 +1,11 @@
 """Tests for bot/main.py"""
 
-# pyright: reportAny=false, reportExplicitAny=false, reportPrivateUsage=false, reportPrivateLocalImportUsage=false, reportUnusedCallResult=false
+# pyright: reportAny=false, reportExplicitAny=false, reportPrivateUsage=false, reportPrivateLocalImportUsage=false, reportUnusedCallResult=false, reportUnknownArgumentType=false, reportIndexIssue=false, reportArgumentType=false, reportUnknownLambdaType=false, reportUnknownMemberType=false
 
 import importlib
 import json
-from typing import Any
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
 
-from _pytest.capture import CaptureFixture
 from _pytest.monkeypatch import MonkeyPatch
 
 
@@ -30,106 +28,85 @@ def _reload_main(monkeypatch: MonkeyPatch):
     return main
 
 
-def test_build_env_has_lark_cli_no_proxy(monkeypatch: MonkeyPatch) -> None:
-    monkeypatch.setenv("http_proxy", "http://127.0.0.1:7890")
-    monkeypatch.setenv("https_proxy", "http://127.0.0.1:7890")
+def _make_receive_event(event_id: str = "evt-001", message_id: str = "om_001"):
+    return SimpleNamespace(
+        header=SimpleNamespace(event_id=event_id),
+        event=SimpleNamespace(
+            sender=SimpleNamespace(sender_id=SimpleNamespace(open_id="ou_user1")),
+            message=SimpleNamespace(
+                message_id=message_id,
+                chat_id="oc_001",
+                chat_type="p2p",
+                message_type="text",
+                content=json.dumps({"text": "hello"}),
+            ),
+        ),
+    )
+
+
+def test_handle_message_receive_enqueues_without_inline_processing(monkeypatch: MonkeyPatch) -> None:
     main = _reload_main(monkeypatch)
-    env = main._build_env()
-    assert env["LARK_CLI_NO_PROXY"] == "1"
-    assert "http_proxy" not in env
-    assert "https_proxy" not in env
-    assert env["NO_PROXY"] == "*"
+    event = _make_receive_event()
+
+    handled = []
+    monkeypatch.setattr(main.state_machine, "handle_event", lambda evt: handled.append(evt))
+
+    main._handle_message_receive(event)
+
+    assert handled == []
+    queued = main._event_queue.get_nowait()
+    assert queued["event"]["message"]["message_id"] == "om_001"
+    assert queued["_event_key"] == "evt-001"
+    main._event_queue.task_done()
 
 
-def test_build_env_has_nvm_bin_in_path(monkeypatch: MonkeyPatch) -> None:
+def test_handle_message_receive_dedupes_pending_and_completed(monkeypatch: MonkeyPatch) -> None:
     main = _reload_main(monkeypatch)
-    env = main._build_env()
-    assert ".nvm" in env["PATH"]
+    event = _make_receive_event(event_id="evt-dup")
+
+    main._handle_message_receive(event)
+    first = main._event_queue.get_nowait()
+    assert first["_event_key"] == "evt-dup"
+
+    main._handle_message_receive(event)
+    assert main._event_queue.empty()
+
+    main._process_queued_event(first)
+    main._event_queue.task_done()
+
+    main._handle_message_receive(event)
+    assert main._event_queue.empty()
 
 
-def test_event_routing_to_state_machine(monkeypatch: MonkeyPatch) -> None:
-    """NDJSON lines are parsed and routed to state_machine.handle_event."""
+def test_process_queued_event_routes_to_state_machine_and_marks_complete(monkeypatch: MonkeyPatch) -> None:
     main = _reload_main(monkeypatch)
+    adapted_event = main._adapt_event(_make_receive_event(event_id="evt-process", message_id="om_777"))
 
-    event = {
-        "event": {
-            "message": {
-                "message_id": "om_001",
-                "chat_id": "oc_001",
-                "chat_type": "p2p",
-                "message_type": "text",
-                "content": json.dumps({"text": "hello"}),
-            },
-            "sender": {"sender_id": {"open_id": "ou_user1"}},
-        }
-    }
+    handled = []
+    monkeypatch.setattr(main.state_machine, "handle_event", lambda evt: handled.append(evt))
+    main._pending_event_keys.add("evt-process")
 
-    handled_events: list[dict[str, Any]] = []
+    main._process_queued_event(adapted_event)
 
-    def fake_handle(evt: dict[str, Any]) -> None:
-        handled_events.append(evt)
-
-    # Simulate one line of NDJSON then EOF
-    line = json.dumps(event)
-    mock_stdout = iter([line + "\n"])
-
-    mock_proc = MagicMock()
-    mock_proc.stdout = mock_stdout
-    mock_proc.wait.return_value = 0
-    mock_proc.returncode = 0
-
-    with patch.object(main.state_machine, "handle_event", side_effect=fake_handle):
-        with patch("subprocess.Popen", return_value=mock_proc):
-            # Run one iteration only — patch time.sleep to raise after first reconnect attempt
-            call_count = [0]
-
-            def fake_sleep(_n: int) -> None:
-                call_count[0] += 1
-                if call_count[0] >= 1:
-                    raise KeyboardInterrupt
-
-            with patch("time.sleep", side_effect=fake_sleep):
-                try:
-                    main._run_event_loop()
-                except (KeyboardInterrupt, SystemExit):
-                    pass
-
-    assert len(handled_events) == 1
-    assert handled_events[0] == event
+    assert len(handled) == 1
+    assert handled[0]["event"]["message"]["message_id"] == "om_777"
+    assert "evt-process" not in main._pending_event_keys
+    assert "evt-process" in main._completed_event_keys
 
 
-def test_bad_json_line_does_not_crash(monkeypatch: MonkeyPatch) -> None:
-    """Malformed NDJSON lines are logged and skipped, not raised."""
+def test_adapt_event_prefers_header_event_id(monkeypatch: MonkeyPatch) -> None:
     main = _reload_main(monkeypatch)
+    adapted = main._adapt_event(_make_receive_event(event_id="evt-header", message_id="om_999"))
 
-    mock_proc = MagicMock()
-    mock_proc.stdout = iter(["NOT VALID JSON\n"])
-    mock_proc.wait.return_value = 0
-    mock_proc.returncode = 0
-
-    with patch("subprocess.Popen", return_value=mock_proc):
-        with patch("time.sleep", side_effect=KeyboardInterrupt):
-            try:
-                main._run_event_loop()
-            except (KeyboardInterrupt, SystemExit):
-                pass
-    # No exception raised — test passes if we get here
+    assert adapted["_event_key"] == "evt-header"
+    assert adapted["event"]["message"]["message_id"] == "om_999"
 
 
-def test_dry_run_exits_zero(monkeypatch: MonkeyPatch, capsys: CaptureFixture[str]) -> None:
-    """--dry-run prints 'config valid' and exits 0."""
-    _setup_env(monkeypatch)
+def test_adapt_event_falls_back_to_message_id(monkeypatch: MonkeyPatch) -> None:
+    main = _reload_main(monkeypatch)
+    event = _make_receive_event(event_id="", message_id="om_fallback")
+    event.header = SimpleNamespace(event_id=None)
 
-    # Force reload of all bot modules to pick up monkeypatched env
-    import bot.config as config
-    _ = importlib.reload(config)
+    adapted = main._adapt_event(event)
 
-    import bot.main as main
-    _ = importlib.reload(main)
-
-    with patch("sys.exit") as mock_exit:
-        main._dry_run()
-
-    captured = capsys.readouterr()
-    assert "config valid" in captured.out
-    mock_exit.assert_called_once_with(0)
+    assert adapted["_event_key"] == "om_fallback"

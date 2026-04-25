@@ -127,3 +127,35 @@ def test_content_str_is_double_parsed(monkeypatch):
         file_bytes, _ = fd.download_file("om_test", "image", content_str)
 
     assert file_bytes == b"image_data"
+
+
+def test_content_mapping_is_accepted(monkeypatch):
+    """download_file should accept already-decoded message.content mappings."""
+    _setup_env(monkeypatch)
+
+    import importlib
+    import bot.config as config
+
+    importlib.reload(config)
+    import bot.token_manager as tm
+
+    importlib.reload(tm)
+    import bot.file_downloader as fd
+
+    importlib.reload(fd)
+
+    fd.token_manager.get_token = MagicMock(return_value="fake_token")
+
+    mock_response = MagicMock()
+    mock_response.content = b"fake_pdf_bytes"
+    mock_response.raise_for_status = MagicMock()
+
+    with patch("bot.file_downloader.requests.get", return_value=mock_response):
+        file_bytes, filename = fd.download_file(
+            "om_msg456",
+            "file",
+            {"file_key": "file_xyz789", "file_name": "receipt.pdf"},
+        )
+
+    assert file_bytes == b"fake_pdf_bytes"
+    assert filename == "receipt.pdf"

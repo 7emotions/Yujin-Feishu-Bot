@@ -26,14 +26,13 @@ def _optional(key: str, default: str = "") -> str:
 # Required keys
 APP_ID: str = _require("APP_ID")
 APP_SECRET: str = _require("APP_SECRET")
-OPENAI_API_KEY: str = _require("OPENAI_API_KEY")
+OPENAI_API_KEY: str = _optional("OPENAI_API_KEY")
 BOT_USER_ID: str = _require("BOT_USER_ID")
 APPROVER_OPEN_ID: str = _require("APPROVER_OPEN_ID")
 
 # Optional keys (may not be set until approval definition is created)
 APPROVAL_CODE: str = _optional("APPROVAL_CODE")
 APPROVER_NODE_KEY: str = _optional("APPROVER_NODE_KEY")
-
 
 def _parse_form_field_ids(raw_value: str) -> dict[str, str]:
     """Parse FORM_FIELD_IDS from JSON into a string-only mapping."""
@@ -57,6 +56,10 @@ def _parse_form_field_ids(raw_value: str) -> dict[str, str]:
 # Form field IDs - JSON dict or empty
 _form_field_ids_raw: str = _optional("FORM_FIELD_IDS", "{}")
 FORM_FIELD_IDS: dict[str, str] = _parse_form_field_ids(_form_field_ids_raw)
+
+# Optional option IDs for radioV2 controls (currency/category)
+_form_option_ids_raw: str = _optional("FORM_OPTION_IDS", "{}")
+FORM_OPTION_IDS: dict[str, str] = _parse_form_field_ids(_form_option_ids_raw)
 
 # List-type keys (comma-separated in .env)
 CONFIRM_KEYWORDS: list[str] = [

@@ -11,23 +11,19 @@ Guards:
   - Ignore messages from BOT_USER_ID (self-trigger prevention)
   - Ignore group chat messages (chat_type != "p2p")
 """
-# pyright: reportAny=false, reportExplicitAny=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false
+# pyright: reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false
 import json
 import logging
-import re
 import threading
 import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from openai import OpenAI
-
 from bot.config import (
     BOT_USER_ID,
     CANCEL_KEYWORDS,
     CONFIRM_KEYWORDS,
-    OPENAI_API_KEY,
     TIMEOUT_SECONDS,
 )
 from bot import (
@@ -37,8 +33,15 @@ from bot import (
     invoice_parser,
     message_sender,
 )
+from bot.utils import ColoredFormatter
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+handler = logging.StreamHandler()
+handler.setFormatter(ColoredFormatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+logger.addHandler(handler)
+
 EventDict = dict[str, Any]
 InvoiceFields = dict[str, str]
 
@@ -121,6 +124,7 @@ class ConversationStateMachine:
         msg = event["event"]["message"]
         session.state = ConversationState.PROCESSING
         session.message_id = msg["message_id"]
+        message_sender.mark_typing(session.message_id)
         try:
             file_bytes, filename = file_downloader.download_file(
                 msg["message_id"],
@@ -130,6 +134,7 @@ class ConversationStateMachine:
             session.file_bytes = file_bytes
             session.filename = filename
             fields = invoice_parser.parse_invoice(file_bytes, filename)
+            logger.info("Parsed invoice fields: %s", fields)
             session.invoice_fields = fields
             session.state = ConversationState.AWAITING_CONFIRM
             confirmation = message_sender.format_confirmation(fields)
@@ -146,6 +151,7 @@ class ConversationStateMachine:
     def _handle_text_reply(self, session: UserSession, event: EventDict) -> None:
         """Handle text message during AWAITING_CONFIRM state."""
         msg = event["event"]["message"]
+        message_sender.mark_typing(session.message_id)
         try:
             content = json.loads(msg.get("content", "{}"))
             text = content.get("text", "").strip()
@@ -182,26 +188,14 @@ class ConversationStateMachine:
             self._apply_correction(session, text)
 
     def _apply_correction(self, session: UserSession, correction_text: str) -> None:
-        """Apply user's field correction via GPT-4o and re-send confirmation."""
+        """Apply user's field correction via local Qwen-VL and re-send confirmation."""
         try:
-            client = OpenAI(api_key=OPENAI_API_KEY)
-            prompt = (
-                f"当前发票信息: {json.dumps(session.invoice_fields, ensure_ascii=False)}\n"
-                f"用户修改要求: {correction_text}\n"
-                f"请返回修改后的完整JSON（只返回JSON，不要其他文字）"
+            session.invoice_fields = invoice_parser.correct_invoice_fields(
+                session.file_bytes,
+                session.filename,
+                session.invoice_fields,
+                correction_text,
             )
-            response = client.chat.completions.create(
-                model="gpt-4o",
-                messages=[{"role": "user", "content": prompt}],
-            )
-            raw = response.choices[0].message.content or ""
-            raw = re.sub(r"^```[a-zA-Z]*\n?", "", raw.strip())
-            raw = re.sub(r"\n?```$", "", raw.strip())
-            updated = json.loads(raw)
-            if isinstance(updated, dict):
-                for k in session.invoice_fields:
-                    if k in updated and updated[k] is not None:
-                        session.invoice_fields[k] = str(updated[k])
         except Exception as exc:
             logger.warning("Correction failed, keeping original fields: %s", exc)
 

@@ -12,70 +12,71 @@ def _reload_sender():
     return importlib.reload(ms)
 
 
-def test_send_text_uses_lark_cli_no_proxy_env():
-    """send_text must call lark-cli with LARK_CLI_NO_PROXY=1 in env."""
+def test_send_text_uses_chat_id_create_request():
+    """send_text should create a chat_id-based text message request."""
     ms = _reload_sender()
+    client = MagicMock()
+    response = MagicMock()
+    response.success.return_value = True
+    client.im.v1.message.create.return_value = response
 
-    mock_result = MagicMock()
-    mock_result.returncode = 0
-    mock_result.stderr = ""
-
-    with patch("bot.message_sender.subprocess.run", return_value=mock_result) as mock_run:
+    with patch.object(ms, "CLIENT", client):
         ms.send_text("oc_chat123", "Hello")
 
-    env = mock_run.call_args.kwargs.get("env", {})
-    assert env.get("LARK_CLI_NO_PROXY") == "1"
+    request = client.im.v1.message.create.call_args.args[0]
+    assert request.receive_id_type == "chat_id"
+    assert request.request_body.receive_id == "oc_chat123"
+    assert request.request_body.msg_type == "text"
+    assert request.request_body.content == '{"text": "Hello"}'
 
 
-def test_send_text_passes_correct_args():
-    """send_text should call lark-cli with correct arguments."""
+def test_reply_text_uses_message_id_reply_request():
+    """reply_text should create a message-id based reply request."""
     ms = _reload_sender()
+    client = MagicMock()
+    response = MagicMock()
+    response.success.return_value = True
+    client.im.v1.message.reply.return_value = response
 
-    mock_result = MagicMock()
-    mock_result.returncode = 0
-    mock_result.stderr = ""
-
-    with patch("bot.message_sender.subprocess.run", return_value=mock_result) as mock_run:
-        ms.send_text("oc_chat123", "Test message")
-
-    cmd = mock_run.call_args.args[0]
-    assert cmd[:4] == ["lark-cli", "im", "messages", "send"]
-    assert "--chat-id" in cmd
-    assert "oc_chat123" in cmd
-    assert "--text" in cmd
-    assert "Test message" in cmd
-
-
-def test_reply_text_passes_message_id():
-    """reply_text should call lark-cli reply with correct message_id."""
-    ms = _reload_sender()
-
-    mock_result = MagicMock()
-    mock_result.returncode = 0
-    mock_result.stderr = ""
-
-    with patch("bot.message_sender.subprocess.run", return_value=mock_result) as mock_run:
+    with patch.object(ms, "CLIENT", client):
         ms.reply_text("om_msg789", "Reply text")
 
-    cmd = mock_run.call_args.args[0]
-    assert cmd[:4] == ["lark-cli", "im", "messages", "reply"]
-    assert "--message-id" in cmd
-    assert "om_msg789" in cmd
-    assert "--text" in cmd
-    assert "Reply text" in cmd
+    request = client.im.v1.message.reply.call_args.args[0]
+    assert request.message_id == "om_msg789"
+    assert request.request_body.msg_type == "text"
+    assert request.request_body.content == '{"text": "Reply text"}'
 
 
-def test_non_zero_exit_raises_runtime_error():
-    """Non-zero subprocess exit should raise RuntimeError."""
+def test_send_text_failure_raises_runtime_error():
+    """Non-success create response should raise RuntimeError."""
     ms = _reload_sender()
+    client = MagicMock()
+    response = MagicMock()
+    response.success.return_value = False
+    response.code = 999
+    response.msg = "send failed"
+    response.get_log_id.return_value = "log-send"
+    client.im.v1.message.create.return_value = response
 
-    mock_result = MagicMock()
-    mock_result.returncode = 1
-    mock_result.stderr = "lark-cli error"
-
-    with patch("bot.message_sender.subprocess.run", return_value=mock_result):
-        with pytest.raises(RuntimeError):
+    with patch.object(ms, "CLIENT", client):
+        with pytest.raises(RuntimeError, match="Feishu send message failed"):
             ms.send_text("oc_chat", "message")
+
+
+def test_reply_text_failure_raises_runtime_error():
+    """Non-success reply response should raise RuntimeError."""
+    ms = _reload_sender()
+    client = MagicMock()
+    response = MagicMock()
+    response.success.return_value = False
+    response.code = 888
+    response.msg = "reply failed"
+    response.get_log_id.return_value = "log-reply"
+    client.im.v1.message.reply.return_value = response
+
+    with patch.object(ms, "CLIENT", client):
+        with pytest.raises(RuntimeError, match="Feishu reply message failed"):
+            ms.reply_text("om_msg", "reply")
 
 
 def test_confirmation_template_has_all_fields():

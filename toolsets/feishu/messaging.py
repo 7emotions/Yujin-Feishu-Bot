@@ -1,9 +1,6 @@
-"""Send and reply to Feishu messages via the official lark-oapi SDK."""
-# pyright: reportMissingTypeStubs=false, reportUnknownMemberType=false, reportOptionalMemberAccess=false
-
 import logging
 from collections.abc import Mapping
-from typing import cast
+from typing import Any, cast
 
 import lark_oapi as lark
 from lark_oapi.api.im.v1 import (
@@ -17,15 +14,14 @@ from lark_oapi.api.im.v1 import (
     ReplyMessageRequestBody,
 )
 
-from bot.config import APP_ID, APP_SECRET
-from bot.utils import ColoredFormatter
-
+from adapters.feishu.settings import APP_ID, APP_SECRET
+from utils import ColoredFormatter
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 handler = logging.StreamHandler()
-handler.setFormatter(ColoredFormatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+handler.setFormatter(ColoredFormatter('%(asctime)s - %(levelname)s - %(name)s - %(message)s'))
 logger.addHandler(handler)
 
 CONFIRMATION_TEMPLATE = """\
@@ -44,7 +40,6 @@ CONFIRMATION_TEMPLATE = """\
 
 
 def _build_client() -> lark.Client:
-    """Create a Feishu OpenAPI client for outbound messages."""
     return lark.Client.builder().app_id(APP_ID).app_secret(APP_SECRET).build()
 
 
@@ -52,15 +47,11 @@ CLIENT = _build_client()
 
 
 def _build_text_content(text: str) -> str:
-    """Serialize plain text content for Feishu IM APIs."""
-    content = lark.JSON.marshal({"text": text})
-    return cast(str, content)
+    return cast(str, lark.JSON.marshal({"text": text}))
 
 
 def send_text(chat_id: str, text: str) -> None:
-    """Send a text message to a chat."""
-    logger.info("Sending text message to chat %s", chat_id)
-
+    client = cast(Any, CLIENT)
     request = (
         CreateMessageRequest.builder()
         .receive_id_type("chat_id")
@@ -73,17 +64,15 @@ def send_text(chat_id: str, text: str) -> None:
         )
         .build()
     )
-
-    response = CLIENT.im.v1.message.create(request)
+    response = client.im.v1.message.create(request)
     if not response.success():
         raise RuntimeError(
             f"Feishu send message failed (code {response.code}): {response.msg}, log_id: {response.get_log_id()}"
         )
 
-def mark_typing(message_id: str) -> None:
-    """Mark a message as typing."""
-    logger.info("Marking message %s as typing", message_id)
 
+def mark_typing(message_id: str) -> None:
+    client = cast(Any, CLIENT)
     request: CreateMessageReactionRequest = CreateMessageReactionRequest.builder() \
         .message_id(message_id) \
             .request_body(CreateMessageReactionRequestBody.builder()
@@ -92,17 +81,15 @@ def mark_typing(message_id: str) -> None:
                     .build())
                 .build()) \
             .build()
-
-    response: CreateMessageReactionResponse = CLIENT.im.v1.message_reaction.create(request)
+    response: CreateMessageReactionResponse = client.im.v1.message_reaction.create(request)
     if not response.success():
         raise RuntimeError(
             f"Feishu send message failed (code {response.code}): {response.msg}, log_id: {response.get_log_id()}"
         )
 
-def reply_text(message_id: str, text: str) -> None:
-    """Reply to a specific Feishu message."""
-    logger.info("Replying to message %s", message_id)
 
+def reply_text(message_id: str, text: str) -> None:
+    client = cast(Any, CLIENT)
     request = (
         ReplyMessageRequest.builder()
         .message_id(message_id)
@@ -114,8 +101,7 @@ def reply_text(message_id: str, text: str) -> None:
         )
         .build()
     )
-
-    response = CLIENT.im.v1.message.reply(request)
+    response = client.im.v1.message.reply(request)
     if not response.success():
         raise RuntimeError(
             f"Feishu reply message failed (code {response.code}): {response.msg}, log_id: {response.get_log_id()}"
@@ -123,7 +109,6 @@ def reply_text(message_id: str, text: str) -> None:
 
 
 def format_confirmation(fields: Mapping[str, str]) -> str:
-    """Format invoice fields into the confirmation message."""
     return CONFIRMATION_TEMPLATE.format(
         invoice_no=fields.get("invoice_no", ""),
         amount=fields.get("amount", ""),

@@ -1,5 +1,10 @@
 openai
 requests
 python-dotenv
+lark-oapi>=1.4.8
+pdf2image
+Pillow
+qwen-vl-utils
+transformers
 pytest
 pytest-mock

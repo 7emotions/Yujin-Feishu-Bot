@@ -64,6 +64,26 @@ def test_upload_sends_multipart_with_name_type_content(monkeypatch):
     assert "name" in files
     assert "type" in files
     assert "content" in files
+    assert files["type"] == (None, "attachment")
+
+
+def test_upload_uses_image_type_for_images(monkeypatch):
+    """Image attachments should send type=image, not the MIME string."""
+    _setup_env(monkeypatch)
+    au = _reload_uploader()
+
+    au.token_manager.get_token = MagicMock(return_value="fake_token")
+
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"code": 0, "data": {"code": "IMG-CODE"}}
+    mock_response.raise_for_status = MagicMock()
+
+    with patch("bot.attachment_uploader.requests.post", return_value=mock_response) as mock_post:
+        au.upload_approval_attachment(b"img_bytes", "invoice.jpg")
+
+    files = mock_post.call_args[1]["files"]
+    assert files["type"] == (None, "image")
+    assert files["content"][2] == "image/jpeg"
 
 
 def test_upload_returns_file_code_uuid(monkeypatch):

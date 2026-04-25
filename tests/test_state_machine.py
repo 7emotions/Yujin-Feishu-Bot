@@ -211,3 +211,41 @@ def test_idle_text_sends_usage_hint_without_state_change(monkeypatch):
     mock_send.assert_called_once_with(
         "oc_hint", "请发送发票图片或PDF文件，我将帮您提交报销申请。"
     )
+
+
+def test_awaiting_confirm_correction_uses_local_invoice_parser(monkeypatch):
+    sm = _reload_module(monkeypatch)
+    fsm = sm.ConversationStateMachine()
+
+    session = fsm.get_or_create_session("ou_user1")
+    session.state = sm.ConversationState.AWAITING_CONFIRM
+    session.invoice_fields = {
+        "invoice_no": "001", "amount": "100", "currency": "CNY",
+        "date": "2024-01-01", "vendor": "V", "category": "餐饮", "description": "test",
+    }
+    session.file_bytes = b"bytes"
+    session.filename = "inv.jpg"
+    session.message_id = "om_001"
+
+    original = {
+        "invoice_no": "001", "amount": "100", "currency": "CNY",
+        "date": "2024-01-01", "vendor": "V", "category": "餐饮", "description": "test",
+    }
+    session.invoice_fields = dict(original)
+
+    corrected = {
+        "invoice_no": "001", "amount": "120", "currency": "CNY",
+        "date": "2024-01-01", "vendor": "V", "category": "餐饮", "description": "test",
+    }
+
+    with (
+        patch.object(sm.invoice_parser, "correct_invoice_fields", return_value=corrected) as mock_correct,
+        patch.object(sm.message_sender, "format_confirmation", return_value="UPDATED_CONFIRMATION") as mock_format,
+        patch.object(sm.message_sender, "reply_text") as mock_reply,
+    ):
+        fsm.handle_event(make_text_event("金额改成120"))
+
+    assert session.invoice_fields == corrected
+    mock_correct.assert_called_once_with(b"bytes", "inv.jpg", original, "金额改成120")
+    mock_format.assert_called_once_with(corrected)
+    mock_reply.assert_called_once_with("om_001", "UPDATED_CONFIRMATION")
