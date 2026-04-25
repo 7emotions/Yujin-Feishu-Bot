@@ -13,7 +13,8 @@ venv/
 .playwright-mcp
 .pytest_cache/
 .vscode/
-
+tests/*
+!tests/.gitkeep
 
 # Project-specific
 .sisyphus/
