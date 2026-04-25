@@ -1,4 +1,4 @@
-# Feishu Bot Platform
+# Yujin Feishu Bot
 
 Universal Feishu bot platform with:
 - runtime routing and session handling
