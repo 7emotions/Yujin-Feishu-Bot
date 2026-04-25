@@ -41,6 +41,17 @@ class ReimbursementPlugin(BotPlugin):
             "create_reimbursement_approval：创建报销审批单",
         ]
 
+    @property
+    def chat_actions(self) -> dict[str, str]:
+        return {"handoff_reimbursement": "将用户引导到报销流程"}
+
+    def handle_chat_action(self, action: str, reply: str, session: UserSession, event: EventDict) -> bool:
+        if action != "handoff_reimbursement":
+            return False
+        session.last_intent = "reimbursement"
+        message_sender.reply_text(session.message_id, reply)
+        return True
+
     def match(self, event: EventDict, session: UserSession) -> float:
         return self._workflow.match(event, session, self.name)
 

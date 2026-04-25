@@ -19,6 +19,13 @@ class BotPlugin(ABC):
     def tool_descriptions(self) -> list[str]:
         return []
 
+    @property
+    def chat_actions(self) -> dict[str, str]:
+        return {"chat": "继续普通聊天对话"}
+
+    def handle_chat_action(self, action: str, reply: str, session: UserSession, event: EventDict) -> bool:
+        return False
+
     @abstractmethod
     def match(self, event: EventDict, session: UserSession) -> float: ...
 
